@@ -20,6 +20,13 @@ if os.path.exists(CRITIC_SAVE_PATH):
     critic.load_state_dict(torch.load(CRITIC_SAVE_PATH))
 
 agent = PPO(env, actor, critic)
-r = agent.do_rollout(render=True)
-print(r)
-agent.reset()
+S = env.reset()
+while True:
+    A = agent.select_best_action(S)
+    S_p, R, is_done = env.take_one_step(A.item())
+    S = S_p
+
+    env.env.render()
+    if is_done:
+        break
+

@@ -31,13 +31,13 @@ class Actor(nn.Module):
             x = F.tanh(self.fc1(x))
             x = F.tanh(self.fc2(x))
             mu = self.mean(x)
-            log_stddev = self.log_stddev
+            log_stddev = self.log_stddev.expand_as(mu)
             return mu.squeeze(), log_stddev.squeeze()
         else:
             x = F.tanh(self.module_list_old[0](x))
             x = F.tanh(self.module_list_old[1](x))
             mu = self.module_list_old[2](x)
-            log_stddev = self.module_list_old[3]
+            log_stddev = self.module_list_old[3].expand_as(mu)
             return mu.squeeze(), log_stddev.squeeze()
 
 

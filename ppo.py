@@ -15,72 +15,42 @@ class PPO:
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=A_LEARNING_RATE)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=C_LEARNING_RATE)
 
-        self.batch_S = []
-        self.batch_A = []
-        self.batch_R = []
-
-    def reset(self):
-        self.batch_S = []
-        self.batch_A = []
-        self.batch_R = []
-
     def select_best_action(self, S):
         S = torch.FloatTensor(S)
         mu, log_sigma = self.actor(Variable(S))
         action = torch.normal(mu, torch.exp(log_sigma))
         return action
 
-    def do_rollout(self, render=False):
-        total_R = 0
+    def compute_advantage(self, values, batch_R, batch_mask):
+        batch_size = len(batch_R)
 
-        is_done = False
-        S = self.env.reset()
-        while not is_done:
-            A = self.select_best_action(S).item()
-            S_prime, R, is_done = self.env.take_one_step(A)
-
-            self.batch_S.append(S)
-            self.batch_A.append(A)
-            self.batch_R.append(R)
-
-            S = S_prime
-            total_R += R
-
-            if render:
-                self.env.env.render()
-
-        return total_R
-
-    def compute_advantage(self, batch_V):
-        ep_len = len(self.batch_R)
-
-        v_target = torch.FloatTensor(ep_len)
-        advantages = torch.FloatTensor(ep_len)
+        v_target = torch.FloatTensor(batch_size)
+        advantages = torch.FloatTensor(batch_size)
 
         prev_v_target = 0
         prev_v = 0
         prev_A = 0
 
-        for i in reversed(range(ep_len)):
-            v_target[i] = self.batch_R[i] + GAMMA * prev_v_target
-            delta = self.batch_R[i] + GAMMA * prev_v - batch_V.data[i]
-            advantages[i] = delta + GAMMA * TAU * prev_A
+        for i in reversed(range(batch_size)):
+            v_target[i] = batch_R[i] + GAMMA * prev_v_target * batch_mask[i]
+            delta = batch_R[i] + GAMMA * prev_v * batch_mask[i] - values.data[i]
+            advantages[i] = delta + GAMMA * TAU * prev_A * batch_mask[i]
 
             prev_v_target = v_target[i]
-            prev_v = batch_V.data[i]
+            prev_v = values.data[i]
             prev_A = advantages[i]
 
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-4)
         return advantages, v_target
 
-    def update_params(self):
-        total_R = self.do_rollout()
-
-        S = torch.FloatTensor(self.batch_S)
-        A = torch.FloatTensor(np.asarray(self.batch_A))
+    def update_params(self, batch):
+        S = torch.FloatTensor(batch.state)
+        masks = torch.FloatTensor(batch.mask)
+        A = torch.FloatTensor(np.concatenate(batch.action, 0))
+        R = torch.FloatTensor(batch.reward)
 
         V_S = self.critic(Variable(S))
-        advantages, v_target = self.compute_advantage(V_S)
+        advantages, v_target = self.compute_advantage(V_S, R, masks)
 
         # loss function for value net
         L_vf = torch.mean(torch.pow(V_S - Variable(v_target), 2))
@@ -98,8 +68,9 @@ class PPO:
         new_log_prob = get_gaussian_log(A, means, log_stddevs)
 
         # old log probability of the actions
-        old_means, old_log_stddevs = self.actor(Variable(S), old=True)
-        old_log_prob = get_gaussian_log(A, old_means, old_log_stddevs)
+        with torch.no_grad():
+            old_means, old_log_stddevs = self.actor(Variable(S), old=True)
+            old_log_prob = get_gaussian_log(A, old_means, old_log_stddevs)
 
         # save the old actor
         self.actor.backup()
@@ -112,8 +83,7 @@ class PPO:
         L_cpi = ratio * advantages
         clip_factor = torch.clamp(ratio, 1 - EPSILON, 1 + EPSILON) * advantages
         L_clip = -torch.mean(torch.min(L_cpi, clip_factor))
-        L_entropy = 0
-        actor_loss = L_clip + L_entropy
+        actor_loss = L_clip
 
         # optimize actor network
         self.actor_optimizer.zero_grad()
@@ -121,7 +91,4 @@ class PPO:
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 40)
         self.actor_optimizer.step()
 
-        # prepare for next simulation
-        self.reset()
-
-        return total_R, L_clip, L_vf
+        return L_clip, L_vf
