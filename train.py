@@ -36,6 +36,7 @@ statistics = {
     'policy_loss': [],
 }
 
+best_reward = 0
 for i in range(0, N_EPISODES):
     memory = Memory()
     num_steps = 0
@@ -85,7 +86,8 @@ for i in range(0, N_EPISODES):
         statistics['policy_loss'].append(policy_loss)
 
     # save models and statistics
-    if (i + 1) % SAVE_STEPS == 0:
+    if reward_batch > best_reward:
+        best_reward = reward_batch
         torch.save(ppo_agent.actor.state_dict(), ACTOR_SAVE_PATH)
         torch.save(ppo_agent.critic.state_dict(), CRITIC_SAVE_PATH)
 
